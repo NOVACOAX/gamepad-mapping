@@ -16,10 +16,8 @@
     ],
     "category": "public.app-category.utilities",
     "gatekeeperAssess": false,
-    "identity": "Beto Gontijo (V2TV7VAR6Y)",
-    "hardenedRuntime": true,
-    "entitlements": "build/entitlements.mac.plist",
-    "entitlementsInherit": "build/entitlements.mac.plist",
+    "identity": null,
+    "hardenedRuntime": false,
     "notarize": false
   },
   "mas": {

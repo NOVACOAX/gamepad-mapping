@@ -5,6 +5,7 @@ export interface KeySimulator {
 export interface MouseSimulator {
   moveMouse: (deltaX: number, deltaY: number) => Promise<{ success: boolean; error?: string }>
   buttonToggle: (button: string, down: boolean) => Promise<{ success: boolean; error?: string }>
+  clickAt: (x: number, y: number) => Promise<{ success: boolean; error?: string }>
 }
 
 export interface IpcRenderer {
@@ -14,11 +15,21 @@ export interface IpcRenderer {
   invoke(channel: string, ...args: any[]): Promise<any>
 }
 
+export interface AppleScriptBridge {
+  run: (script: string) => Promise<{ success: boolean; result?: string; error?: string }>
+}
+
+export interface HudBridge {
+  show: (title: string, body?: string) => void
+}
+
 declare global {
   interface Window {
     keySimulator: KeySimulator
     mouseSimulator?: MouseSimulator
     ipcRenderer?: IpcRenderer
+    appleScript?: AppleScriptBridge
+    hud?: HudBridge
   }
 }
 

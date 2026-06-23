@@ -9,7 +9,7 @@ interface DeviceListProps {
 
 export function DeviceList({ gamepads, selectedGamepadIndex, onSelectGamepad }: DeviceListProps) {
   return (
-    <aside className="device-panel">
+    <>
       <div className="panel-header">
         <h2>Devices</h2>
       </div>
@@ -39,7 +39,7 @@ export function DeviceList({ gamepads, selectedGamepadIndex, onSelectGamepad }: 
           ))
         )}
       </div>
-    </aside>
+    </>
   )
 }
 

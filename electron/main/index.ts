@@ -5,14 +5,19 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  Notification,
   screen,
   shell,
   systemPreferences,
   Tray,
 } from "electron";
+import { exec } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+
+const execAsync = promisify(exec);
 import { update } from "./update";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -278,6 +283,18 @@ const mouseButtonMap: Record<string, Button> = {
   MouseMiddle: Button.MIDDLE,
 };
 
+// Move mouse to absolute screen coordinates and perform a left click (hardware-level)
+ipcMain.handle("mouse-click-at", async (_event, x: number, y: number) => {
+  try {
+    await mouse.setPosition({ x: Math.round(x), y: Math.round(y) });
+    await mouse.pressButton(Button.LEFT);
+    await mouse.releaseButton(Button.LEFT);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: String(error) };
+  }
+});
+
 // Handle mouse button toggle requests
 ipcMain.handle(
   "mouse-button-toggle",
@@ -369,6 +386,26 @@ ipcMain.on("gamepad-data", (_event, gamepads) => {
   BrowserWindow.getAllWindows().forEach((window) => {
     window.webContents.send("gamepad-update", gamepads);
   });
+});
+
+// Run an AppleScript and return trimmed stdout
+ipcMain.handle("run-applescript", async (_event, script: string) => {
+  if (process.platform !== "darwin") {
+    return { success: false, error: "AppleScript is only available on macOS" };
+  }
+  try {
+    const { stdout } = await execAsync(`osascript -e ${JSON.stringify(script)}`);
+    return { success: true, result: stdout.trim() };
+  } catch (e: any) {
+    return { success: false, error: String(e.message ?? e) };
+  }
+});
+
+// Show a brief OS notification (used for Lightroom slider HUD)
+ipcMain.on("show-notification", (_event, title: string, body?: string) => {
+  if (Notification.isSupported()) {
+    new Notification({ title, body: body ?? "", silent: true }).show();
+  }
 });
 
 app.setLoginItemSettings({

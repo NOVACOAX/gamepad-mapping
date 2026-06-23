@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { GamepadState } from "../hooks/useGamepad";
-import { GamepadMapping, StickDirection } from "../hooks/useGamepadMapping";
+import { GamepadMapping, StickDirection, StickMappingType } from "../hooks/useGamepadMapping";
 import { StickHotkeyMode } from "./StickHotkeyMode";
 import { StickMouseMode } from "./StickMouseMode";
 import { KeyMappingSelector } from "./KeyMappingSelector";
 import { MappingActions } from "./MappingPanel";
 import { getSticks, getButtonConfig } from "../constants/controllerMappings";
+import { LIGHTROOM_BASIC_SLIDERS } from "../constants/lightroomSliders";
 import "./MappingPanel.css";
 
 interface StickMappingPanelProps {
@@ -24,7 +25,7 @@ interface StickMappingPanelProps {
     key: string,
     label: string,
     threshold: number,
-    type?: "hotkey" | "mouse",
+    type?: StickMappingType,
     sensitivity?: number,
     acceleration?: number,
     invertX?: boolean,
@@ -58,23 +59,28 @@ export function StickMappingPanel({
   onRemoveButtonMapping,
   onSetEditingButton,
 }: StickMappingPanelProps) {
-  const [mappingType, setMappingType] = useState<"hotkey" | "mouse">("hotkey");
-  const previousMappingTypeRef = useRef<"hotkey" | "mouse" | null>(null);
+  const [mappingType, setMappingType] = useState<StickMappingType>("hotkey");
+  const previousMappingTypeRef = useRef<StickMappingType | null>(null);
 
   const stickMappings =
     mapping?.axisMappings.filter((m) => m.stickIndex === stickIndex) || [];
   const mouseMapping = stickMappings.find((m) => m.type === "mouse");
-  const isMouseMode = mouseMapping !== undefined || mappingType === "mouse";
+  const lrSliderMapping = stickMappings.find((m) => m.type === "lightroom-sliders");
+  const isMouseMode = (mouseMapping !== undefined || mappingType === "mouse") && !lrSliderMapping;
+  const isLrSlidersMode = lrSliderMapping !== undefined;
 
   // Sync mapping type with existing mappings
   useEffect(() => {
-    if (mouseMapping) {
+    if (lrSliderMapping) {
+      setMappingType("lightroom-sliders");
+      previousMappingTypeRef.current = "lightroom-sliders";
+    } else if (mouseMapping) {
       setMappingType("mouse");
       previousMappingTypeRef.current = "mouse";
     } else {
       setMappingType("hotkey");
     }
-  }, [mouseMapping]);
+  }, [mouseMapping, lrSliderMapping]);
 
   const removeAllStickMappings = (stickIndex: number) => {
     const stickMappings =
@@ -224,54 +230,77 @@ export function StickMappingPanel({
       )}
 
       {/* Mode selector */}
-      <div className="mapping-mode-selector">
-        <label>Mapping Mode:</label>
-        <div className="mode-buttons">
-          <button
-            className={`mode-button ${!isMouseMode ? "active" : ""}`}
-            onClick={() => {
-              // Switch to hotkey mode - remove mouse mapping if exists
-              if (mouseMapping) {
-                onRemoveAxisMapping(stickIndex, mouseMapping.direction);
-              }
-              // Track that we're switching modes
-              previousMappingTypeRef.current = mappingType;
-              // Always set to hotkey mode and clear editing state
-              setMappingType("hotkey");
-              if (editingAxis?.stickIndex === stickIndex) {
-                onSetEditingAxis(null);
-              }
-            }}
-          >
-            8 Directions (Hotkeys)
-          </button>
-          <button
-            className={`mode-button ${isMouseMode ? "active" : ""}`}
-            onClick={() => {
-              // Switch to mouse mode - remove all hotkey mappings for this stick first
-              if (!mouseMapping) {
-                // Remove all existing hotkey mappings for this stick
-                stickMappings.forEach((m) => {
-                  if (m.type !== "mouse") {
-                    onRemoveAxisMapping(stickIndex, m.direction);
-                  }
-                });
-                // Track that we're switching modes
+      {!isLrSlidersMode && (
+        <div className="mapping-mode-selector">
+          <label>Mapping Mode:</label>
+          <div className="mode-buttons">
+            <button
+              className={`mode-button ${!isMouseMode ? "active" : ""}`}
+              onClick={() => {
+                if (mouseMapping) {
+                  onRemoveAxisMapping(stickIndex, mouseMapping.direction);
+                }
                 previousMappingTypeRef.current = mappingType;
-                setMappingType("mouse");
-                // Clear any editing state
+                setMappingType("hotkey");
                 if (editingAxis?.stickIndex === stickIndex) {
                   onSetEditingAxis(null);
                 }
-              }
-            }}
-          >
-            Mouse Control
-          </button>
+              }}
+            >
+              8 Directions (Hotkeys)
+            </button>
+            <button
+              className={`mode-button ${isMouseMode ? "active" : ""}`}
+              onClick={() => {
+                if (!mouseMapping) {
+                  stickMappings.forEach((m) => {
+                    if (m.type !== "mouse") {
+                      onRemoveAxisMapping(stickIndex, m.direction);
+                    }
+                  });
+                  previousMappingTypeRef.current = mappingType;
+                  setMappingType("mouse");
+                  if (editingAxis?.stickIndex === stickIndex) {
+                    onSetEditingAxis(null);
+                  }
+                }
+              }}
+            >
+              Mouse Control
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
-      {isMouseMode ? (
+      {isLrSlidersMode ? (
+        <div className="lr-sliders-info">
+          <div className="lr-sliders-header">
+            <span className="lr-sliders-badge">LR Basic Sliders</span>
+            <button
+              className="lr-sliders-clear"
+              title="Remove LR Sliders mode"
+              onClick={() => {
+                stickMappings.forEach((m) =>
+                  onRemoveAxisMapping(stickIndex, m.direction)
+                );
+                setMappingType("hotkey");
+              }}
+            >
+              ×
+            </button>
+          </div>
+          <p className="lr-sliders-desc">
+            Up/Down cycles sliders · Left/Right adjusts value
+          </p>
+          <div className="lr-sliders-list">
+            {LIGHTROOM_BASIC_SLIDERS.map((name, i) => (
+              <span key={name} className="lr-slider-chip">
+                {i + 1}. {name}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : isMouseMode ? (
         <StickMouseMode
           mapping={mapping}
           stickIndex={stickIndex}

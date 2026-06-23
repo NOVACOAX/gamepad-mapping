@@ -13,6 +13,7 @@ import {
   DEFAULT_MOUSE_INVERT_Y,
   DEFAULT_STICK_MAPPING_TYPE,
 } from "../constants/defaults";
+import { LIGHTROOM_BASIC_SLIDERS } from "../constants/lightroomSliders";
 
 export interface ButtonMapping {
   buttonIndex: number;
@@ -30,19 +31,20 @@ export type StickDirection =
   | "down-left"
   | "down-right";
 
-export type StickMappingType = "hotkey" | "mouse";
+export type StickMappingType = "hotkey" | "mouse" | "lightroom-sliders";
 
 export interface AxisMapping {
-  stickIndex: number; // 0 for left stick, 1 for right stick
-  direction: StickDirection; // Only used for hotkey mode
+  stickIndex: number;
+  direction: StickDirection;
   key: string;
   label: string;
   threshold: number;
-  type: StickMappingType; // 'hotkey' for 8 directions, 'mouse' for mouse control
-  sensitivity?: number; // For mouse control (0.1 - 10.0)
-  acceleration?: number; // For mouse control (0.0 - 2.0)
-  invertX?: boolean; // For mouse control
-  invertY?: boolean; // For mouse control
+  type: StickMappingType;
+  sensitivity?: number;
+  acceleration?: number;
+  invertX?: boolean;
+  invertY?: boolean;
+  cycleDebounceMs?: number;
 }
 
 export interface DpadMapping {
@@ -51,14 +53,59 @@ export interface DpadMapping {
   label: string;
 }
 
-export interface GamepadMapping {
-  gamepadIndex: number;
+export interface GamepadProfile {
+  id: string;
+  name: string;
   buttonMappings: ButtonMapping[];
   axisMappings: AxisMapping[];
-  dpadMappings?: DpadMapping[];
+  dpadMappings: DpadMapping[];
+}
+
+export interface GamepadMapping {
+  gamepadIndex: number;
+  // Default (non-profile) mappings — used when activeProfileId is ""
+  buttonMappings: ButtonMapping[];
+  axisMappings: AxisMapping[];
+  dpadMappings: DpadMapping[];
+  // Profile system
+  profiles: GamepadProfile[];
+  activeProfileId: string;
 }
 
 const STORAGE_KEY = "gamepad-mappings";
+
+function migrateMapping(raw: any): GamepadMapping {
+  return {
+    gamepadIndex: raw.gamepadIndex,
+    buttonMappings: raw.buttonMappings ?? [],
+    axisMappings: raw.axisMappings ?? [],
+    dpadMappings: raw.dpadMappings ?? [],
+    profiles: raw.profiles ?? [],
+    activeProfileId: raw.activeProfileId ?? "",
+  };
+}
+
+function getActiveMappings(mapping: GamepadMapping): {
+  buttonMappings: ButtonMapping[];
+  axisMappings: AxisMapping[];
+  dpadMappings: DpadMapping[];
+} {
+  if (mapping.activeProfileId) {
+    const profile = mapping.profiles.find((p) => p.id === mapping.activeProfileId);
+    if (profile) {
+      return {
+        buttonMappings: profile.buttonMappings,
+        axisMappings: profile.axisMappings,
+        dpadMappings: profile.dpadMappings,
+      };
+    }
+  }
+  return {
+    buttonMappings: mapping.buttonMappings,
+    axisMappings: mapping.axisMappings,
+    dpadMappings: mapping.dpadMappings,
+  };
+}
 
 export function useGamepadMapping(gamepads: GamepadState[]) {
   const [mappings, setMappings] = useState<GamepadMapping[]>([]);
@@ -81,7 +128,10 @@ export function useGamepadMapping(gamepads: GamepadState[]) {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
-        setMappings(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        setMappings(
+          Array.isArray(parsed) ? parsed.map(migrateMapping) : []
+        );
       } catch (e) {
         console.error("Failed to load mappings:", e);
       }
@@ -100,6 +150,8 @@ export function useGamepadMapping(gamepads: GamepadState[]) {
             buttonMappings: [],
             axisMappings: [],
             dpadMappings: [],
+            profiles: [],
+            activeProfileId: "",
           });
         }
       });
@@ -121,37 +173,148 @@ export function useGamepadMapping(gamepads: GamepadState[]) {
     [mappings]
   );
 
-  // Memoize mouse mappings lookup to avoid filtering every frame
   const getMouseMappings = useCallback((mapping: GamepadMapping) => {
-    return mapping.axisMappings.filter((m) => m.type === "mouse");
+    const { axisMappings } = getActiveMappings(mapping);
+    return axisMappings.filter((m) => m.type === "mouse");
   }, []);
 
-  const setButtonMapping = useCallback(
-    (gamepadIndex: number, buttonIndex: number, key: string, label: string) => {
+  // --- Profile management ---
+
+  const addProfile = useCallback(
+    (
+      gamepadIndex: number,
+      profile: Omit<GamepadProfile, "id">
+    ): string => {
+      const id = `profile-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       setMappings((prev) => {
         const updated = [...prev];
-        let mapping = updated.find((m) => m.gamepadIndex === gamepadIndex);
+        const mapping = updated.find((m) => m.gamepadIndex === gamepadIndex);
+        if (mapping) {
+          mapping.profiles = [...mapping.profiles, { ...profile, id }];
+        }
+        return updated;
+      });
+      return id;
+    },
+    []
+  );
 
+  const removeProfile = useCallback(
+    (gamepadIndex: number, profileId: string) => {
+      setMappings((prev) => {
+        const updated = [...prev];
+        const mapping = updated.find((m) => m.gamepadIndex === gamepadIndex);
+        if (mapping) {
+          mapping.profiles = mapping.profiles.filter((p) => p.id !== profileId);
+          if (mapping.activeProfileId === profileId) {
+            mapping.activeProfileId = "";
+          }
+        }
+        return updated;
+      });
+    },
+    []
+  );
+
+  const setActiveProfile = useCallback(
+    (gamepadIndex: number, profileId: string) => {
+      setMappings((prev) => {
+        const updated = [...prev];
+        const mapping = updated.find((m) => m.gamepadIndex === gamepadIndex);
+        if (mapping) {
+          mapping.activeProfileId = profileId;
+        }
+        return updated;
+      });
+    },
+    []
+  );
+
+  const addLightroomProfiles = useCallback(
+    (
+      gamepadIndex: number,
+      libraryProfile: Omit<GamepadProfile, "id">,
+      developProfile: Omit<GamepadProfile, "id">
+    ) => {
+      setMappings((prev) => {
+        const LIGHTROOM_LIBRARY_PROFILE = libraryProfile;
+        const LIGHTROOM_DEVELOP_PROFILE = developProfile;
+        const updated = [...prev];
+        let mapping = updated.find((m) => m.gamepadIndex === gamepadIndex);
         if (!mapping) {
           mapping = {
             gamepadIndex,
             buttonMappings: [],
             axisMappings: [],
             dpadMappings: [],
+            profiles: [],
+            activeProfileId: "",
           };
           updated.push(mapping);
         }
 
-        const existingButtonMapping = mapping.buttonMappings.find(
-          (m) => m.buttonIndex === buttonIndex
-        );
-        if (existingButtonMapping) {
-          existingButtonMapping.key = key;
-          existingButtonMapping.label = label;
-        } else {
-          mapping.buttonMappings.push({ buttonIndex, key, label });
+        const libraryExists = mapping.profiles.some((p) => p.name === "LR Library");
+        const developExists = mapping.profiles.some((p) => p.name === "LR Develop");
+
+        if (!libraryExists) {
+          mapping.profiles = [
+            ...mapping.profiles,
+            {
+              ...LIGHTROOM_LIBRARY_PROFILE,
+              id: `lr-library-${gamepadIndex}`,
+            },
+          ];
+        }
+        if (!developExists) {
+          mapping.profiles = [
+            ...mapping.profiles,
+            {
+              ...LIGHTROOM_DEVELOP_PROFILE,
+              id: `lr-develop-${gamepadIndex}`,
+            },
+          ];
         }
 
+        return updated;
+      });
+    },
+    []
+  );
+
+  // --- Existing CRUD functions (operate on active profile or default) ---
+
+  const setButtonMapping = useCallback(
+    (gamepadIndex: number, buttonIndex: number, key: string, label: string) => {
+      setMappings((prev) => {
+        const updated = [...prev];
+        let mapping = updated.find((m) => m.gamepadIndex === gamepadIndex);
+        if (!mapping) {
+          mapping = {
+            gamepadIndex,
+            buttonMappings: [],
+            axisMappings: [],
+            dpadMappings: [],
+            profiles: [],
+            activeProfileId: "",
+          };
+          updated.push(mapping);
+        }
+
+        const target = mapping.activeProfileId
+          ? mapping.profiles.find((p) => p.id === mapping!.activeProfileId)
+          : mapping;
+
+        if (!target) return updated;
+
+        const existing = target.buttonMappings.find(
+          (m) => m.buttonIndex === buttonIndex
+        );
+        if (existing) {
+          existing.key = key;
+          existing.label = label;
+        } else {
+          target.buttonMappings.push({ buttonIndex, key, label });
+        }
         return updated;
       });
       setEditingButton(null);
@@ -176,34 +339,39 @@ export function useGamepadMapping(gamepads: GamepadState[]) {
       setMappings((prev) => {
         const updated = [...prev];
         let mapping = updated.find((m) => m.gamepadIndex === gamepadIndex);
-
         if (!mapping) {
           mapping = {
             gamepadIndex,
             buttonMappings: [],
             axisMappings: [],
             dpadMappings: [],
+            profiles: [],
+            activeProfileId: "",
           };
           updated.push(mapping);
         }
 
+        const target = mapping.activeProfileId
+          ? mapping.profiles.find((p) => p.id === mapping!.activeProfileId)
+          : mapping;
+
+        if (!target) return updated;
+
         if (type === "mouse") {
-          // For mouse mode, there's only one mapping per stick (direction doesn't matter)
-          const existingMouseMapping = mapping.axisMappings.find(
+          const existingMouse = target.axisMappings.find(
             (m) => m.stickIndex === stickIndex && m.type === "mouse"
           );
-          if (existingMouseMapping) {
-            existingMouseMapping.threshold = threshold;
-            existingMouseMapping.sensitivity = sensitivity;
-            existingMouseMapping.acceleration = acceleration;
-            existingMouseMapping.invertX = invertX;
-            existingMouseMapping.invertY = invertY;
+          if (existingMouse) {
+            existingMouse.threshold = threshold;
+            existingMouse.sensitivity = sensitivity;
+            existingMouse.acceleration = acceleration;
+            existingMouse.invertX = invertX;
+            existingMouse.invertY = invertY;
           } else {
-            // Remove all hotkey mappings for this stick when adding mouse mapping
-            mapping.axisMappings = mapping.axisMappings.filter(
+            target.axisMappings = target.axisMappings.filter(
               (m) => !(m.stickIndex === stickIndex && m.type === "hotkey")
             );
-            mapping.axisMappings.push({
+            target.axisMappings.push({
               stickIndex,
               direction: "up",
               key: "Mouse",
@@ -217,23 +385,21 @@ export function useGamepadMapping(gamepads: GamepadState[]) {
             });
           }
         } else {
-          // Hotkey mode - individual direction mappings
-          const existingAxisMapping = mapping.axisMappings.find(
+          const existingHotkey = target.axisMappings.find(
             (m) =>
               m.stickIndex === stickIndex &&
               m.direction === direction &&
               m.type === "hotkey"
           );
-          if (existingAxisMapping) {
-            existingAxisMapping.key = key;
-            existingAxisMapping.label = label;
-            existingAxisMapping.threshold = threshold;
+          if (existingHotkey) {
+            existingHotkey.key = key;
+            existingHotkey.label = label;
+            existingHotkey.threshold = threshold;
           } else {
-            // Remove mouse mapping if exists when adding hotkey mapping
-            mapping.axisMappings = mapping.axisMappings.filter(
+            target.axisMappings = target.axisMappings.filter(
               (m) => !(m.stickIndex === stickIndex && m.type === "mouse")
             );
-            mapping.axisMappings.push({
+            target.axisMappings.push({
               stickIndex,
               direction,
               key,
@@ -256,8 +422,12 @@ export function useGamepadMapping(gamepads: GamepadState[]) {
       setMappings((prev) => {
         const updated = [...prev];
         const mapping = updated.find((m) => m.gamepadIndex === gamepadIndex);
-        if (mapping) {
-          mapping.buttonMappings = mapping.buttonMappings.filter(
+        if (!mapping) return updated;
+        const target = mapping.activeProfileId
+          ? mapping.profiles.find((p) => p.id === mapping.activeProfileId)
+          : mapping;
+        if (target) {
+          target.buttonMappings = target.buttonMappings.filter(
             (m) => m.buttonIndex !== buttonIndex
           );
         }
@@ -272,8 +442,12 @@ export function useGamepadMapping(gamepads: GamepadState[]) {
       setMappings((prev) => {
         const updated = [...prev];
         const mapping = updated.find((m) => m.gamepadIndex === gamepadIndex);
-        if (mapping) {
-          mapping.axisMappings = mapping.axisMappings.filter(
+        if (!mapping) return updated;
+        const target = mapping.activeProfileId
+          ? mapping.profiles.find((p) => p.id === mapping.activeProfileId)
+          : mapping;
+        if (target) {
+          target.axisMappings = target.axisMappings.filter(
             (m) => !(m.stickIndex === stickIndex && m.direction === direction)
           );
         }
@@ -293,29 +467,30 @@ export function useGamepadMapping(gamepads: GamepadState[]) {
       setMappings((prev) => {
         const updated = [...prev];
         let mapping = updated.find((m) => m.gamepadIndex === gamepadIndex);
-
         if (!mapping) {
           mapping = {
             gamepadIndex,
             buttonMappings: [],
             axisMappings: [],
             dpadMappings: [],
+            profiles: [],
+            activeProfileId: "",
           };
           updated.push(mapping);
         }
 
-        if (!mapping.dpadMappings) {
-          mapping.dpadMappings = [];
-        }
+        const target = mapping.activeProfileId
+          ? mapping.profiles.find((p) => p.id === mapping!.activeProfileId)
+          : mapping;
 
-        const existingDpadMapping = mapping.dpadMappings.find(
-          (m) => m.direction === direction
-        );
-        if (existingDpadMapping) {
-          existingDpadMapping.key = key;
-          existingDpadMapping.label = label;
+        if (!target) return updated;
+
+        const existing = target.dpadMappings.find((m) => m.direction === direction);
+        if (existing) {
+          existing.key = key;
+          existing.label = label;
         } else {
-          mapping.dpadMappings.push({ direction, key, label });
+          target.dpadMappings.push({ direction, key, label });
         }
 
         return updated;
@@ -330,8 +505,12 @@ export function useGamepadMapping(gamepads: GamepadState[]) {
       setMappings((prev) => {
         const updated = [...prev];
         const mapping = updated.find((m) => m.gamepadIndex === gamepadIndex);
-        if (mapping && mapping.dpadMappings) {
-          mapping.dpadMappings = mapping.dpadMappings.filter(
+        if (!mapping) return updated;
+        const target = mapping.activeProfileId
+          ? mapping.profiles.find((p) => p.id === mapping.activeProfileId)
+          : mapping;
+        if (target) {
+          target.dpadMappings = target.dpadMappings.filter(
             (m) => m.direction !== direction
           );
         }
@@ -341,129 +520,90 @@ export function useGamepadMapping(gamepads: GamepadState[]) {
     []
   );
 
-  // Helper function to get fallback cardinal directions for diagonal directions
   const getFallbackDirections = useCallback(
     (direction: StickDirection): StickDirection[] => {
       switch (direction) {
-        case "up-left":
-          return ["up", "left"];
-        case "up-right":
-          return ["up", "right"];
-        case "down-left":
-          return ["down", "left"];
-        case "down-right":
-          return ["down", "right"];
-        default:
-          return [];
+        case "up-left": return ["up", "left"];
+        case "up-right": return ["up", "right"];
+        case "down-left": return ["down", "left"];
+        case "down-right": return ["down", "right"];
+        default: return [];
       }
     },
     []
   );
 
-  // Track which stateKeys are holding each key (allows multiple buttons to hold same key)
+  // Track which stateKeys are holding each key
   const keyHoldersRef = useRef<Map<string, Set<string>>>(new Map());
-  // Track previous button states to only trigger on state changes
   const previousButtonStatesRef = useRef<Map<string, boolean>>(new Map());
-  // Track previous axis states to only trigger on state changes
   const previousAxisStatesRef = useRef<Map<string, boolean>>(new Map());
-  // Track pending mouse movements to prevent queuing (which causes drift)
   const pendingMouseMovementsRef = useRef<Set<string>>(new Set());
-  // Track when each stick started moving for time-based acceleration
   const stickMovementStartTimeRef = useRef<Map<string, number>>(new Map());
 
-  // Simulate keyboard key press or mouse button via Electron IPC
+  // Lightroom slider state — index also exposed as state for UI
+  const [currentLrSliderIndex, setCurrentLrSliderIndexState] = useState(0);
+  const currentSliderIndexRef = useRef<number>(0);
+  const lastAdjustTimeRef = useRef<number>(0);
+  const pendingSliderAdjustRef = useRef<boolean>(false);
+  const prevLrAxisActiveRef = useRef<Map<string, boolean>>(new Map());
+
+  const setCurrentLrSliderIndex = useCallback((index: number) => {
+    currentSliderIndexRef.current = index;
+    setCurrentLrSliderIndexState(index);
+  }, []);
+
   const simulateKeyPress = useCallback(
     async (key: string, pressed: boolean, stateKey: string) => {
-      // Check if state actually changed
       const previousState =
         previousButtonStatesRef.current.get(stateKey) ??
         previousAxisStatesRef.current.get(stateKey);
-      if (previousState === pressed) {
-        // State hasn't changed, don't do anything
-        return;
-      }
+      if (previousState === pressed) return;
 
-      // Update previous state
       if (stateKey.startsWith("button-")) {
         previousButtonStatesRef.current.set(stateKey, pressed);
       } else {
         previousAxisStatesRef.current.set(stateKey, pressed);
       }
 
-      // Get or create the set of stateKeys holding this key/button
       if (!keyHoldersRef.current.has(key)) {
         keyHoldersRef.current.set(key, new Set());
       }
       const holders = keyHoldersRef.current.get(key)!;
-
       const wasPressed = holders.size > 0;
 
       if (pressed) {
-        // Add this stateKey to the holders set
         holders.add(stateKey);
-
-        // Only press the key/button if it wasn't already pressed by another button
         if (!wasPressed) {
           try {
             let result;
-            // Check if it's a mouse button
             if (key.startsWith("Mouse")) {
-              if (!window.mouseSimulator) {
-                console.warn("Mouse simulator not available");
-                return;
-              }
+              if (!window.mouseSimulator) return;
               result = await window.mouseSimulator.buttonToggle(key, true);
             } else {
-              if (!window.keySimulator) {
-                console.warn("Key simulator not available");
-                return;
-              }
+              if (!window.keySimulator) return;
               result = await window.keySimulator.keyToggle(key, true);
             }
-
             if (result && !result.success && result.error) {
               console.error("Input simulation error:", result.error);
-              // If it's a permissions error, log it prominently
-              if (result.error.includes("Accessibility permissions")) {
-                console.error(
-                  "⚠️ Accessibility permissions required! Please grant permissions in System Preferences > Security & Privacy > Privacy > Accessibility"
-                );
-              }
             }
           } catch (error) {
             console.error("Error pressing key/button:", error);
           }
         }
       } else {
-        // Remove this stateKey from the holders set
         holders.delete(stateKey);
-
-        // Only release the key/button if no other buttons are holding it
         if (wasPressed && holders.size === 0) {
           try {
             let result;
-            // Check if it's a mouse button
             if (key.startsWith("Mouse")) {
-              if (!window.mouseSimulator) {
-                console.warn("Mouse simulator not available");
-                return;
-              }
+              if (!window.mouseSimulator) return;
               result = await window.mouseSimulator.buttonToggle(key, false);
             } else {
-              if (!window.keySimulator) {
-                console.warn("Key simulator not available");
-                return;
-              }
+              if (!window.keySimulator) return;
               result = await window.keySimulator.keyToggle(key, false);
             }
-
             if (result && !result.success && result.error) {
               console.error("Input simulation error:", result.error);
-              if (result.error.includes("Accessibility permissions")) {
-                console.error(
-                  "⚠️ Accessibility permissions required! Please grant permissions in System Preferences > Security & Privacy > Privacy > Accessibility"
-                );
-              }
             }
           } catch (error) {
             console.error("Error releasing key/button:", error);
@@ -480,8 +620,11 @@ export function useGamepadMapping(gamepads: GamepadState[]) {
       const mapping = getMapping(gamepad.index);
       if (!mapping) return;
 
-      // Check button mappings
-      mapping.buttonMappings.forEach((btnMapping) => {
+      const { buttonMappings, axisMappings, dpadMappings } =
+        getActiveMappings(mapping);
+
+      // Button mappings
+      buttonMappings.forEach((btnMapping) => {
         const button = gamepad.buttons[btnMapping.buttonIndex];
         if (button) {
           const stateKey = `gamepad-${gamepad.index}-button-${btnMapping.buttonIndex}`;
@@ -489,160 +632,209 @@ export function useGamepadMapping(gamepads: GamepadState[]) {
         }
       });
 
-      // Check dpad mappings with combined keys
-      if (mapping.dpadMappings && mapping.dpadMappings.length > 0) {
+      // D-pad mappings
+      if (dpadMappings.length > 0) {
         const currentDirection = getDpadDirection(gamepad.buttons);
-
-        // Check if there's a direct mapping for the current direction
         const hasDirectMapping =
           currentDirection &&
-          mapping.dpadMappings.some((m) => m.direction === currentDirection);
+          dpadMappings.some((m) => m.direction === currentDirection);
 
-        // Process each dpad mapping
-        mapping.dpadMappings.forEach((dpadMapping) => {
+        dpadMappings.forEach((dpadMapping) => {
           const stateKey = `gamepad-${gamepad.index}-dpad-${dpadMapping.direction}`;
           let isActive = false;
-
           if (currentDirection === dpadMapping.direction) {
-            // Direct match
             isActive = true;
           } else if (currentDirection && !hasDirectMapping) {
-            // No direct mapping - check if this is a fallback cardinal direction for a diagonal
-            const fallbackDirections = getFallbackDirections(currentDirection);
-            isActive = fallbackDirections.includes(dpadMapping.direction);
+            const fallbacks = getFallbackDirections(currentDirection);
+            isActive = fallbacks.includes(dpadMapping.direction);
           }
-
           simulateKeyPress(dpadMapping.key, isActive, stateKey);
         });
       }
 
-      // Process axis mappings - handle both hotkey and mouse control modes
-      // Check if mouse mode is enabled for each stick
-      const mouseMappings = getMouseMappings(mapping);
+      // Axis mappings
+      const mouseMappings = axisMappings.filter((m) => m.type === "mouse");
       const sticksWithMouse = new Set(mouseMappings.map((m) => m.stickIndex));
+      const lrSliderMappings = axisMappings.filter(
+        (m) => m.type === "lightroom-sliders"
+      );
+      const sticksWithLrSliders = new Set(lrSliderMappings.map((m) => m.stickIndex));
       const processedMouseSticks = new Set<number>();
 
-      // Process mouse mappings first (one per stick)
+      // Mouse mode
       mouseMappings.forEach((mouseMapping) => {
         const stickIndex = mouseMapping.stickIndex;
-        if (processedMouseSticks.has(stickIndex)) {
-          return; // Already processed this stick
-        }
+        if (processedMouseSticks.has(stickIndex)) return;
         processedMouseSticks.add(stickIndex);
 
-        // Get stick axes based on stick index
         const { axisXIndex, axisYIndex } = getStickAxes(stickIndex);
         let stickX = gamepad.axes[axisXIndex] || 0;
         let stickY = gamepad.axes[axisYIndex] || 0;
 
-        // Apply user invert settings
         if (mouseMapping.invertX) stickX = -stickX;
         if (mouseMapping.invertY) stickY = -stickY;
 
-        // Use flat deadzone threshold for X and Y independently (not relative to magnitude)
         const absX = Math.abs(stickX);
         const absY = Math.abs(stickY);
         const threshold = mouseMapping.threshold;
         const inDeadzone = absX < threshold && absY < threshold;
-
         const mouseStateKey = `gamepad-${gamepad.index}-mouse-${stickIndex}`;
 
         if (inDeadzone) {
-          // Reset movement start time when stick returns to deadzone
           stickMovementStartTimeRef.current.delete(mouseStateKey);
-          return; // In deadzone - don't move mouse
+          return;
         }
 
-        // Calculate movement with sensitivity and acceleration
-        const sensitivity =
-          mouseMapping.sensitivity ?? DEFAULT_MOUSE_SENSITIVITY;
-        const acceleration =
-          mouseMapping.acceleration ?? DEFAULT_MOUSE_ACCELERATION;
-
-        // Track movement start time for time-based acceleration
+        const sensitivity = mouseMapping.sensitivity ?? DEFAULT_MOUSE_SENSITIVITY;
+        const acceleration = mouseMapping.acceleration ?? DEFAULT_MOUSE_ACCELERATION;
         const now = Date.now();
+
         if (!stickMovementStartTimeRef.current.has(mouseStateKey)) {
           stickMovementStartTimeRef.current.set(mouseStateKey, now);
         }
-        const movementStartTime =
-          stickMovementStartTimeRef.current.get(mouseStateKey)!;
-        const movementDurationSeconds = (now - movementStartTime) / 1000;
+        const movementDurationSeconds =
+          (now - stickMovementStartTimeRef.current.get(mouseStateKey)!) / 1000;
 
-        // Remove deadzone: subtract threshold from X and Y independently (flat deadzone)
         let normalizedX = 0;
         let normalizedY = 0;
-
         if (absX >= threshold) {
           const signX = stickX >= 0 ? 1 : -1;
           normalizedX = (signX * (absX - threshold)) / (1 - threshold);
         }
-
         if (absY >= threshold) {
           const signY = stickY >= 0 ? 1 : -1;
           normalizedY = (signY * (absY - threshold)) / (1 - threshold);
         }
 
-        // Apply time-based acceleration: acceleration = 1 means no acceleration,
-        // acceleration = 1.2 means 1.2x speed every second
         let accelerationMultiplier = 1.0;
         if (acceleration !== 1.0 && movementDurationSeconds > 0) {
-          // acceleration^time gives us the multiplier
-          // e.g., acceleration=1.2, time=1s -> 1.2^1 = 1.2x
-          // e.g., acceleration=1.2, time=2s -> 1.2^2 = 1.44x
-          accelerationMultiplier = Math.pow(
-            acceleration,
-            movementDurationSeconds
-          );
+          accelerationMultiplier = Math.pow(acceleration, movementDurationSeconds);
         }
 
-        // Calculate movement delta
         const deltaX = normalizedX * sensitivity * accelerationMultiplier * 10;
         const deltaY = normalizedY * sensitivity * accelerationMultiplier * 10;
 
-        // Final check: re-read stick state RIGHT BEFORE sending to prevent drift
-        // This ensures we never send a movement if stick is already released
         let finalStickX = gamepad.axes[axisXIndex] || 0;
         let finalStickY = gamepad.axes[axisYIndex] || 0;
         if (mouseMapping.invertX) finalStickX = -finalStickX;
         if (mouseMapping.invertY) finalStickY = -finalStickY;
 
-        if (
-          Math.abs(finalStickX) < threshold &&
-          Math.abs(finalStickY) < threshold
-        ) {
-          // Reset movement start time when stick returns to deadzone
+        if (Math.abs(finalStickX) < threshold && Math.abs(finalStickY) < threshold) {
           stickMovementStartTimeRef.current.delete(mouseStateKey);
-          return; // In deadzone now - don't send movement
+          return;
         }
 
-        // Prevent queuing: only send if no pending movement for this stick
-        // Queued IPC calls cause drift because each reads mouse position after previous move
-        if (pendingMouseMovementsRef.current.has(mouseStateKey)) {
-          return; // Skip this frame - previous movement still pending
-        }
+        if (pendingMouseMovementsRef.current.has(mouseStateKey)) return;
 
-        // Send movement - mark as pending to prevent queuing
         if (window.mouseSimulator) {
           pendingMouseMovementsRef.current.add(mouseStateKey);
           window.mouseSimulator
             .moveMouse(deltaX, deltaY)
-            .then(() => {
-              pendingMouseMovementsRef.current.delete(mouseStateKey);
-            })
-            .catch((err) => {
-              console.error("Error moving mouse:", err);
-              pendingMouseMovementsRef.current.delete(mouseStateKey);
-            });
+            .then(() => pendingMouseMovementsRef.current.delete(mouseStateKey))
+            .catch(() => pendingMouseMovementsRef.current.delete(mouseStateKey));
         }
       });
 
-      // Process hotkey mappings (skip if mouse mode is enabled for that stick)
-      // Group by stick index to check for direct mappings efficiently
-      const stickMappingsByStick = mapping.axisMappings.reduce(
+      // Lightroom sliders mode
+      lrSliderMappings.forEach((lrMapping) => {
+        const stickIndex = lrMapping.stickIndex;
+        const { axisXIndex } = getStickAxes(stickIndex);
+        const stickX = gamepad.axes[axisXIndex] || 0;
+        const threshold = lrMapping.threshold;
+        const adjustRepeatMs = 150;
+        const now = Date.now();
+
+        // Helper: update selected slider and click its label via nut-js hardware mouse event.
+        // AppleScript is used READ-ONLY (to get coordinates) because LR ignores AS "click at".
+        // nut-js uses CGEvent — identical to a physical mouse click — which LR does respond to.
+        const cycleTo = (newIndex: number) => {
+          setCurrentLrSliderIndex(newIndex);
+          const sliderName = LIGHTROOM_BASIC_SLIDERS[newIndex];
+          window.hud?.show(sliderName, "Basic Panel");
+
+          if (window.appleScript && window.mouseSimulator) {
+            const idx = newIndex + 1;
+            (async () => {
+              try {
+                const res = await window.appleScript!.run(`
+tell application "System Events"
+  tell process "Adobe Lightroom Classic"
+    set allSliders to every slider of entire contents of window 1
+    if (count of allSliders) >= ${idx} then
+      set s to item ${idx} of allSliders
+      set sPos to position of s
+      set sSz to size of s
+      set lx to ((item 1 of sPos) - 70) as integer
+      set ly to ((item 2 of sPos) + (item 2 of sSz) / 2) as integer
+      return (lx as text) & "," & (ly as text)
+    end if
+    return "0,0"
+  end tell
+end tell`);
+                if (res.success && res.result && res.result !== "0,0") {
+                  const parts = res.result.trim().split(",");
+                  const x = parseInt(parts[0], 10);
+                  const y = parseInt(parts[1], 10);
+                  if (x > 0 && y > 0) {
+                    await window.mouseSimulator!.clickAt(x, y);
+                  }
+                }
+              } catch {
+                // cycling still updates the app UI even if LR click fails
+              }
+            })();
+          }
+        };
+
+        // D-pad left (button 14) = previous slider, D-pad right (button 15) = next slider
+        // Edge-triggered so each press cycles exactly once.
+        const dpadLeft = gamepad.buttons[14]?.pressed ?? false;
+        const dpadRight = gamepad.buttons[15]?.pressed ?? false;
+        const dpadLeftKey = `g${gamepad.index}-lr-dpad-left`;
+        const dpadRightKey = `g${gamepad.index}-lr-dpad-right`;
+        const wasDpadLeft = prevLrAxisActiveRef.current.get(dpadLeftKey) ?? false;
+        const wasDpadRight = prevLrAxisActiveRef.current.get(dpadRightKey) ?? false;
+
+        if (dpadLeft && !wasDpadLeft) {
+          const total = LIGHTROOM_BASIC_SLIDERS.length;
+          cycleTo((currentSliderIndexRef.current - 1 + total) % total);
+        }
+        if (dpadRight && !wasDpadRight) {
+          const total = LIGHTROOM_BASIC_SLIDERS.length;
+          cycleTo((currentSliderIndexRef.current + 1) % total);
+        }
+
+        prevLrAxisActiveRef.current.set(dpadLeftKey, dpadLeft);
+        prevLrAxisActiveRef.current.set(dpadRightKey, dpadRight);
+
+        // Left stick left/right adjusts the focused slider value
+        const leftActive = stickX < -threshold;
+        const rightActive = stickX > threshold;
+
+        if (
+          (leftActive || rightActive) &&
+          !pendingSliderAdjustRef.current &&
+          now - lastAdjustTimeRef.current > adjustRepeatMs
+        ) {
+          if (window.keySimulator) {
+            pendingSliderAdjustRef.current = true;
+            lastAdjustTimeRef.current = now;
+            const key = rightActive ? "=" : "-";
+            window.keySimulator
+              .keyToggle(key, true)
+              .then(() => window.keySimulator.keyToggle(key, false))
+              .finally(() => { pendingSliderAdjustRef.current = false; });
+          }
+        }
+      });
+
+      // Hotkey mode (skip sticks handled by mouse or lightroom-sliders)
+      const stickMappingsByStick = axisMappings.reduce(
         (acc, axisMapping) => {
           if (
             axisMapping.type === "hotkey" &&
-            !sticksWithMouse.has(axisMapping.stickIndex)
+            !sticksWithMouse.has(axisMapping.stickIndex) &&
+            !sticksWithLrSliders.has(axisMapping.stickIndex)
           ) {
             acc.set(
               axisMapping.stickIndex,
@@ -654,40 +846,23 @@ export function useGamepadMapping(gamepads: GamepadState[]) {
         new Map<number, AxisMapping[]>()
       );
 
-      // Process each stick's mappings
-      stickMappingsByStick.entries().forEach(([stickIndex, axisMappings]) => {
+      stickMappingsByStick.entries().forEach(([stickIndex, stickAxisMappings]) => {
         const { axisXIndex, axisYIndex } = getStickAxes(stickIndex);
         const stickX = gamepad.axes[axisXIndex] || 0;
         const stickY = gamepad.axes[axisYIndex] || 0;
+        const configuredDirections = new Set(stickAxisMappings.map((m) => m.direction));
 
-        // Get all configured directions for this stick (to check if diagonal has direct mapping)
-        const configuredDirections = new Set(
-          axisMappings.map((m) => m.direction)
-        );
-
-        // Process each mapping for this stick
         Promise.all(
-          axisMappings.map((axisMapping) => {
+          stickAxisMappings.map((axisMapping) => {
             const stateKey = `gamepad-${gamepad.index}-axis-${axisMapping.stickIndex}-${axisMapping.direction}`;
-            const detectedDirection = getStickDirection(
-              stickX,
-              stickY,
-              axisMapping.threshold
-            );
+            const detectedDirection = getStickDirection(stickX, stickY, axisMapping.threshold);
             let isActive = false;
 
             if (detectedDirection === axisMapping.direction) {
-              // Direct match
               isActive = true;
-            } else if (
-              detectedDirection &&
-              !configuredDirections.has(detectedDirection)
-              
-            ) {
-              // No direct mapping configured for detected direction - check if this is a fallback cardinal direction for a diagonal
-              const fallbackDirections =
-                getFallbackDirections(detectedDirection);
-              isActive = fallbackDirections.includes(axisMapping.direction);
+            } else if (detectedDirection && !configuredDirections.has(detectedDirection)) {
+              const fallbacks = getFallbackDirections(detectedDirection);
+              isActive = fallbacks.includes(axisMapping.direction);
             }
 
             return simulateKeyPress(axisMapping.key, isActive, stateKey);
@@ -695,17 +870,24 @@ export function useGamepadMapping(gamepads: GamepadState[]) {
         );
       });
     });
-  }, [gamepads, getMapping, getMouseMappings, simulateKeyPress]);
+  }, [gamepads, getMapping, getMouseMappings, simulateKeyPress, getFallbackDirections]);
 
   return {
     mappings,
     getMapping,
+    getActiveMappings,
     setButtonMapping,
     setAxisMapping,
     setDpadMapping,
     removeButtonMapping,
     removeAxisMapping,
     removeDpadMapping,
+    addProfile,
+    removeProfile,
+    setActiveProfile,
+    addLightroomProfiles,
+    currentLrSliderIndex,
+    setCurrentLrSliderIndex,
     editingButton,
     setEditingButton,
     editingAxis,

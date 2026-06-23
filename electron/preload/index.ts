@@ -38,6 +38,19 @@ contextBridge.exposeInMainWorld('mouseSimulator', {
   buttonToggle: (button: string, down: boolean) => {
     return ipcRenderer.invoke('mouse-button-toggle', button, down)
   },
+  clickAt: (x: number, y: number) => {
+    return ipcRenderer.invoke('mouse-click-at', x, y)
+  },
+})
+
+// Expose AppleScript runner (macOS only)
+contextBridge.exposeInMainWorld('appleScript', {
+  run: (script: string) => ipcRenderer.invoke('run-applescript', script),
+})
+
+// Expose notification sender
+contextBridge.exposeInMainWorld('hud', {
+  show: (title: string, body?: string) => ipcRenderer.send('show-notification', title, body),
 })
 
 // --------- Preload scripts loading ---------

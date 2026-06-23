@@ -106,6 +106,138 @@
   background: rgba(255, 255, 255, 0.8);
 }
 
+/* ── Profile Switcher ─────────────────────────────────────────────────── */
+
+.profile-switcher {
+  border-top: 1px solid #e5e5e7;
+  padding: 0.75rem;
+}
+
+.profile-switcher-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.25rem 0.125rem 0.5rem;
+}
+
+.profile-switcher-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #86868b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.lr-badge {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 10px;
+  text-transform: capitalize;
+  background: #e8f4fd;
+  color: #0071e3;
+  border: 1px solid #bbd6f5;
+}
+
+.lr-badge--develop {
+  background: #fdf3e8;
+  color: #c07400;
+  border-color: #f5d99b;
+}
+
+.profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 0.5rem;
+}
+
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.profile-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.625rem;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.15s;
+}
+
+.profile-item:hover {
+  background: #f5f5f7;
+}
+
+.profile-item--active {
+  background: #007aff;
+}
+
+.profile-item--active .profile-name {
+  color: white;
+}
+
+.profile-name {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #1d1d1f;
+}
+
+.profile-active-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  flex-shrink: 0;
+}
+
+.profile-delete {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: #86868b;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 1rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.profile-delete:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.add-lr-profiles-btn {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px dashed #007aff;
+  background: transparent;
+  color: #007aff;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s;
+  text-align: center;
+}
+
+.add-lr-profiles-btn:hover {
+  background: #e8f4fd;
+}
+
 /* Scrollbar Styling */
 .device-list::-webkit-scrollbar {
   width: 8px;
@@ -124,3 +256,88 @@
   background: #a1a1a6;
 }
 
+
+/* ── LR Slider Selector ──────────────────────────────────────────────── */
+
+.lr-slider-selector {
+  border-top: 1px solid #e5e5e7;
+  padding: 0.75rem;
+}
+
+.lr-slider-selector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.25rem 0.125rem 0.5rem;
+}
+
+.lr-slider-selector-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #86868b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.lr-slider-selector-hint {
+  font-size: 0.6875rem;
+  color: #aeaeb2;
+}
+
+.lr-slider-selector-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.lr-slider-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.3125rem 0.5rem;
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.1s;
+}
+
+.lr-slider-item:hover {
+  background: #f5f5f7;
+}
+
+.lr-slider-item--active {
+  background: #c07400;
+}
+
+.lr-slider-item--active .lr-slider-name {
+  color: #fff;
+  font-weight: 600;
+}
+
+.lr-slider-item--active .lr-slider-index {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.lr-slider-index {
+  font-size: 0.6875rem;
+  color: #aeaeb2;
+  width: 14px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.lr-slider-name {
+  font-size: 0.875rem;
+  color: #1d1d1f;
+  flex: 1;
+}
+
+.lr-slider-cursor {
+  font-size: 0.625rem;
+  color: rgba(255, 255, 255, 0.8);
+  flex-shrink: 0;
+  letter-spacing: -1px;
+}
